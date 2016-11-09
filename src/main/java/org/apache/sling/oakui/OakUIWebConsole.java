@@ -20,9 +20,16 @@
 
 package org.apache.sling.oakui;
 
-import java.io.*;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -36,6 +43,7 @@ import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
+import com.google.common.collect.Lists;
 import org.apache.commons.io.IOUtils;
 import org.apache.felix.scr.annotations.Activate;
 import org.apache.felix.scr.annotations.Component;
@@ -51,9 +59,6 @@ import org.apache.jackrabbit.oak.spi.state.NodeStore;
 import org.apache.lucene.index.CorruptIndexException;
 import org.apache.lucene.index.SegmentCommitInfo;
 import org.apache.lucene.index.SegmentInfos;
-import org.apache.lucene.store.FSDirectory;
-import org.apache.lucene.store.IndexInput;
-import org.apache.lucene.store.SimpleFSDirectory;
 import org.apache.sling.api.resource.LoginException;
 import org.apache.sling.commons.json.JSONArray;
 import org.apache.sling.commons.json.JSONException;
@@ -86,7 +91,8 @@ public class OakUIWebConsole extends HttpServlet {
 
     @Reference
     private SlingRepository slingRepository;
-    private Pattern operationPattern = Pattern.compile("^\\/oakui\\/lucene\\/(?<index>.*)\\/(?<file>.*)\\.(?<op>.*).json$");
+    private Pattern indexOperationPattern = Pattern.compile("^\\/oakui\\/lucene\\/(?<index>.*)\\.(?<op>.*).json$");
+    private Pattern fileOperationPattern = Pattern.compile("^\\/oakui\\/lucene\\/(?<index>.*)\\/(?<file>.*)\\.(?<op>.*).json$");
     private Pattern zipOperationPattern = Pattern.compile("^\\/oakui\\/lucene\\/(?<index>.*)\\/(?<file>.*)\\.(?<op>.*).zip$");
     private File localFileLocation = new File("fsresources");
 
@@ -127,16 +133,15 @@ public class OakUIWebConsole extends HttpServlet {
             } else if ( "/oakui/lucene.json".equals(pathInfo)) {
                 sendLuceneInfo(request, response);
             } else {
-                Matcher matchOperation = operationPattern.matcher(pathInfo);
+                Matcher indexMatchOperation = indexOperationPattern.matcher(pathInfo);
+                Matcher fileMatchOperation = fileOperationPattern.matcher(pathInfo);
                 Matcher zipmatchOperation = zipOperationPattern.matcher(pathInfo);
-                if ( matchOperation.matches() ) {
-                    String index = matchOperation.group("index");
-                    String operation = matchOperation.group("op");
-                    String file = matchOperation.group("file");
+                if ( fileMatchOperation.matches() ) {
+                    String index = fileMatchOperation.group("index");
+                    String operation = fileMatchOperation.group("op");
+                    String file = fileMatchOperation.group("file");
                     LOGGER.info("Operation {} {} {} ", new Object[]{index, file, operation});
-                    if ("an".equals(operation)) {
-                        analyseSegment(request, response, index, file);
-                    } else if ("do".equals(operation)) {
+                    if ("do".equals(operation)) {
                         downloadSegment(request, response, index, file);
                     } else {
                         response.sendError(HttpServletResponse.SC_BAD_REQUEST);
@@ -151,11 +156,20 @@ public class OakUIWebConsole extends HttpServlet {
                     } else {
                         response.sendError(HttpServletResponse.SC_BAD_REQUEST);
                     }
+                } else if ( indexMatchOperation.matches()) {
+                    String index = indexMatchOperation.group("index");
+                    String operation = indexMatchOperation.group("op");
+                    if ("an".equals(operation)) {
+                        analyseIndex(request, response, index);
+                    } else {
+                        response.sendError(HttpServletResponse.SC_BAD_REQUEST);
+                    }
                 } else {
                     response.sendError(HttpServletResponse.SC_NOT_FOUND);
                 }
             }
         } catch (Exception e) { // NOSONAR
+            LOGGER.info("Failure ",e);
             LOGGER.error(e.getMessage(),e);
             response.sendError(HttpServletResponse.SC_INTERNAL_SERVER_ERROR, "Check logs for details");
         } finally {
@@ -331,58 +345,79 @@ public class OakUIWebConsole extends HttpServlet {
     }
 
 
-    private void analyseSegment(@Nonnull HttpServletRequest request,
+    private void analyseIndex(@Nonnull HttpServletRequest request,
                                 @Nonnull HttpServletResponse response,
-                                @Nonnull String index,
-                                @Nonnull String file) throws JSONException, IOException {
+                                @Nonnull String index) throws JSONException, IOException {
         // load the commit info and get all the files.
         // Need a directory implementation that works off the location, OakDirectory isn't exported, so will have to re-create.
         NodeStore ns = getNodeStore();
         NodeState oakIndex = ns.getRoot().getChildNode("oak:index");
-        JSONObject out = new JSONObject();
         NodeStoreDirectory nsDirectory = new NodeStoreDirectory(oakIndex, index);
-        //FSDirectory fsDirectory = new SimpleFSDirectory(new File("/Users/ieb/Adobe/CQ/6.2/crx-quickstart/repository/index/lucene-1476792800724/data"));
-        SegmentInfos segmentCommitInfos = new SegmentInfos();
-        try {
-            if ("segments.gen".equals(file)) {
-                // segments.gen is actually a pre v3 segments file, to get the current commit open without specifying the segments file.
-                segmentCommitInfos.read(nsDirectory);
-            } else {
-                segmentCommitInfos.read(nsDirectory, file);
-            }
-            Iterator<SegmentCommitInfo> sci =  segmentCommitInfos.iterator();
-            JSONArray commits = new JSONArray();
-            while(sci.hasNext()) {
-                SegmentCommitInfo sc = sci.next();
-                JSONObject commitInfo = new JSONObject();
-                JSONArray files = new JSONArray();
-                for (String f : sc.files() ) {
-                    files.put(f);
+        JSONObject out = new JSONObject();
+
+        int sequence = 0;
+        for (String file : getSegments(nsDirectory.listAll())) {
+            if (file.startsWith("segments")) {
+                JSONObject segmentDetail = new JSONObject();
+                //FSDirectory fsDirectory = new SimpleFSDirectory(new File("/Users/ieb/Adobe/CQ/6.2/crx-quickstart/repository/index/lucene-1476792800724/data"));
+                SegmentInfos segmentCommitInfos = new SegmentInfos();
+                try {
+                    if ("segments.gen".equals(file)) {
+                        // segments.gen is actually a pre v3 segments file, to get the current commit open without specifying the segments file.
+                        segmentCommitInfos.read(nsDirectory);
+                    } else {
+                        segmentCommitInfos.read(nsDirectory, file);
+                    }
+                    Iterator<SegmentCommitInfo> sci = segmentCommitInfos.iterator();
+                    JSONArray commits = new JSONArray();
+                    while (sci.hasNext()) {
+                        SegmentCommitInfo sc = sci.next();
+                        JSONObject commitInfo = new JSONObject();
+                        JSONArray files = new JSONArray();
+                        for (String f : sc.files()) {
+                            files.put(f);
+                        }
+                        commitInfo.put("files", files);
+                        commitInfo.put("delcount", sc.getDelCount());
+                        commitInfo.put("delgen", sc.getDelGen());
+                        commitInfo.put("hasDeletions", sc.hasDeletions());
+                        commitInfo.put("hasFieldUpdates", sc.hasFieldUpdates());
+                        commitInfo.put("sizeInBytes", sc.sizeInBytes());
+                        commitInfo.put("fieldInfosGen", sc.getFieldInfosGen());
+                        commitInfo.put("nextDelGen", sc.getNextDelGen());
+                        commitInfo.put("version", sc.info.getVersion());
+                        commitInfo.put("diagnostics", sc.info.getDiagnostics());
+                        commitInfo.put("doccount", sc.info.getDocCount());
+                        commitInfo.put("name", sc.info.name);
+                        commitInfo.put("useCompoundFile", sc.info.getUseCompoundFile());
+
+                        commits.put(commitInfo);
+                    }
+                    segmentDetail.put("commits", commits);
+                    segmentDetail.put("segment_sequence", sequence);
+                    segmentDetail.put("segment_name", file);
+                } catch (CorruptIndexException e) {
+                    LOGGER.info(e.getMessage(), e);
+                    segmentDetail.put("corruption", e.getMessage());
                 }
-
-                commitInfo.put("files",files);
-                commitInfo.put("delcount",sc.getDelCount());
-                commitInfo.put("delgen",sc.getDelGen());
-                commitInfo.put("hasDeletions",sc.hasDeletions());
-                commitInfo.put("hasFieldUpdates",sc.hasFieldUpdates());
-                commitInfo.put("sizeInBytes",sc.sizeInBytes());
-                commitInfo.put("fieldInfosGen",sc.getFieldInfosGen());
-                commitInfo.put("nextDelGen",sc.getNextDelGen());
-                commitInfo.put("version",sc.info.getVersion());
-                commitInfo.put("diagnostics",sc.info.getDiagnostics());
-                commitInfo.put("doccount",sc.info.getDocCount());
-                commitInfo.put("name",sc.info.name);
-                commitInfo.put("useCompoundFile",sc.info.getUseCompoundFile());
-
-                commits.put(commitInfo);
+                out.put(file, segmentDetail);
+                sequence++;
             }
-            out.put("commits", commits);
-        } catch ( CorruptIndexException e) {
-            LOGGER.info(e.getMessage(), e);
-            out.put("corruption", e.getMessage());
         }
         response.setContentType("application/json; charset=utf-8");
         response.getWriter().println(out.toString(4));
+    }
+
+    private String[] getSegments(String[] all) {
+        List<String> a = new ArrayList<String>();
+        a.add("segments.gen");
+        Arrays.sort(all);
+        for (String s: all) {
+            if(s.startsWith("segments_")) {
+                a.add(s);
+            }
+        }
+        return a.toArray(new String[a.size()]);
     }
 
 
@@ -395,12 +430,12 @@ public class OakUIWebConsole extends HttpServlet {
         InputStream in = null;
         try {
             String pathInfo = request.getPathInfo();
-            Matcher matchOperation = operationPattern.matcher(pathInfo);
+            Matcher matchOperation = fileOperationPattern.matcher(pathInfo);
             if ( matchOperation.matches() ) {
                 String index = matchOperation.group("index");
                 String operation = matchOperation.group("op");
                 String file = matchOperation.group("file");
-                LOGGER.info("Operation {} {} {} ",new Object[]{index,file, operation});
+                LOGGER.info("Operation {} {} {} ", new Object[]{index,file, operation});
                 if ("da".equals(operation)) {
                     damageSegment(request, response, index, file);
                 } else if ( "re".equals(operation)) {

@@ -21,6 +21,41 @@
 -->
 <script type="text/javascript" src="/system/console/oakui/res/ui/angular-1.2.26.js"></script>
 <script type="text/javascript" src="/system/console/oakui/res/ui/oakui.js"></script>
+<style><!--
+.segment_class_0 {
+    background-color: rgb(165,0,38);
+}
+.segment_class_1 {
+    background-color: rgb(215,48,39);
+}
+.segment_class_2 {
+    background-color: rgb(244,109,67);
+}
+.segment_class_3 {
+    background-color: rgb(253,174,97);
+}
+.segment_class_4 {
+    background-color: rgb(254,224,144);
+}
+.segment_class_5 {
+    background-color: rgb(224,243,248);
+}
+.segment_class_6 {
+    background-color: rgb(171,217,233);
+}
+.segment_class_7 {
+    background-color: rgb(116,173,209);
+}
+.segment_class_8 {
+    background-color: rgb(69,117,180);
+}
+.segment_class_9 {
+    background-color: rgb(49,54,149);
+}
+.segment_class_10 {
+    background-color: rgb(49,54,209);
+}
+--></style>
 <div id="content" ng-app="oakui" ng-controller="OakuiController" >
     <!-- status line -->
     <!--
@@ -39,34 +74,21 @@
     <div  ng-show="migFormNo === 1" >
         <table id="luceneTable" class="nicetable" >
             <tr>
-                <th class="content container">Index Name</th>
-                <th class="content container">Index Type</th>
-                <th class="content container">Reindex</th>
-                <th class="content container">Reindex Count</th>
-                <th class="content container">IndexPath</th>
-                <th class="content container">Commits</th>
+                <th class="content container">Index</th>
                 <th class="content container">Files</th>
             </tr>
                     
             <tr ng-repeat="index in lucene.indexes " >
                 <td>
-                        {{index.name}}
-
-                </td>
-                <td>
-                        {{index.type}}
-                </td>
-                <td>
-                        {{index.reindex}}
-                </td>
-                <td>
-                        {{index.reindexCount}}
-                </td>
-                <td>
-                        {{index._indexPath}}
-                </td>
-                <td>
-                        {{outputGenerations(index.files)}}
+                        Name: {{index.name}} <br>
+                        Type: {{index.type}} <br>
+                        reindex: {{index.reindex}} <br>
+                        reindex count: {{index.reindexCount}} <br>
+                        index path: {{index._indexPath}} <br>
+                        commits: {{outputGenerations(index.files)}} <br>
+                        <button ng-click="analyseCommit(index.oakui_path, index)"
+                                class="ui-state-default ui-corner-all"
+                                style="min-width: 8em;">Analyse Commit</button>
                 </td>
                 <td>
                     <a href="oakui/{{index.oakui_path}}/segments.gen.do.zip">Download index files</a>
@@ -74,17 +96,18 @@
                     <table id="luceneTable" class="nicetable" >
                         <tr>
                             <th class="content container">Name</th>
+                            <th class="content container">Info</th>
                             <th class="content container">Size</th>
                             <th class="content container">Last Modified</th>
                             <th class="content container">Age</th>
                         </tr>
                         <tr ng-repeat="file in index.files | orderBy : '-jcr_lastModified' " >
                             <td>
-                                <button ng-if="isSegment(file.name)" ng-click="analyseCommit(index.oakui_path, file.name)" class="ui-state-default ui-corner-all" style="min-width: 8em;">Analyse Commit</button>
-                                <button ng-if="isPastCommit(file.name)"  ng-click="revertCommit(index.oakui_path, file.name)" class="ui-state-default ui-corner-all" style="min-width: 8em;">Revert to Here</button>
+                                <span class="{{file.segment_class}}" >{{file.name}}</span>
                             </td>
-                            <td>
-                                {{file.name}}
+                            <td ng-if="isSegment(file.name)">Segment file</td>
+                            <td ng-if="isNotSegment(file.name)">
+                                Used by <span ng-repeat="segment in file.segments" class="{{segment.class}}" >{{segment.name}}, </span>
                             </td>
                             <td>
                                 {{file.jcr_data[0].length}}
@@ -99,7 +122,6 @@
                     </table>
                 </td>
             </tr>
-
         </table>
     </div>
 

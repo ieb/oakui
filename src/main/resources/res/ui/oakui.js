@@ -133,12 +133,14 @@
         };
 
         $scope.fileOrder = function(v1, v2 ) {
-            console.log(v1,v2);
             return 1;
         }
 
         $scope.isSegment = function(name) {
-            return name.startsWith("segments");
+            return name !== undefined && name.startsWith("segments");
+        }
+        $scope.isNotSegment = function(name) {
+            return name !== undefined &&  !name.startsWith("segments");
         }
         $scope.isPastCommit = function(name) {
             return name.startsWith("segments_");
@@ -146,22 +148,72 @@
         $scope.isHeadCommit = function(name) {
             return (name === "segments.gen");
         }
-        $scope.analyseCommit = function(path, name) {
-            console.log("Analyse",path,name);
+        $scope.analyseCommit = function(path, index) {
 
-            $http.get("oakui/"+path+"/"+name+".an.json").success(
+            $http.get("oakui/"+path+".an.json").success(
                 function(data, status) {
                     if(typeof data === 'string') {
                         data = JSON.parse(data);
                     }
-                    console.log("Got ",data);
+                    var indexFiles = [];
+                    if (index.fileByName === undefined) {
+                        index.fileByName = {};
+                        index.files.sort(function compare(a,b){
+                            if ( a.name < b.name ) {
+                                return -1;
+                            }
+                            if ( a.name > b.name) {
+                                return 1;
+                            }
+                            return 0;
+                        });
+                        var n = 0;
+                        for ( var i = 0; i < index.files.length; i++) {
+                            if (index.files[i].name.startsWith("segments")) {
+                                index.files[i].segment_sequence = n;
+                                index.files[i].segment_class = "segment_class_"+n;
+                                n++;
+                            }
+                            if (index.files[i].segments === undefined) {
+                                index.files[i].segments = [];
+                            }
+                            index.fileByName[index.files[i].name] = index.files[i];
+                        }
+                    }
+
+
+                    for (var v in data) {
+                        if(data.hasOwnProperty(v)) {
+                            var segmentInfo = data[v];
+                            var segmentClass = "segment_class_"+segmentInfo.segment_sequence;
+                            var segmentName = segmentInfo.segment_name;
+                            var files = {};
+                            // iterate through the commit info and add the segment to the file.
+                            for (var i = 0; i < segmentInfo.commits.length; i++) {
+                               for ( var j = 0; j < segmentInfo.commits[i].files.length; j++) {
+                                    var segList = index.fileByName[segmentInfo.commits[i].files[j]].segments;
+                                    var got = false;
+                                    for ( var k = 0; k < segList.length; k++ ) {
+                                        if (segList[k].name === segmentName) {
+                                           got = true;
+                                        }
+                                    }
+                                    if ( !got ) {
+                                        segList.push({
+                                            name : segmentName,
+                                            class : segmentClass
+                                        });
+                                    }
+                               }
+                            }
+                        }
+                    }
                 }).error(function(data, status, headers, config) {
                     console.log("Analysis of segment failed ",data, status);
                 });
         }
 
         $scope.revertCommit = function(path, name) {
-            console.log("Revert",path,name);
             $http.post("oakui/"+path+"/"+name+".re.json").success(
                 function(data, status) {
                     if(typeof data === 'string') {
@@ -174,7 +226,6 @@
 
         }
         $scope.damageFile = function(path, name) {
-            console.log("Corrupt",path,name);
             $http.post("oakui/"+path+"/"+name+".da.json").success(
                 function(data, status) {
                     if(typeof data === 'string') {
