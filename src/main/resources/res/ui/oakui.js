@@ -191,18 +191,22 @@
                             // iterate through the commit info and add the segment to the file.
                             for (var i = 0; i < segmentInfo.commits.length; i++) {
                                for ( var j = 0; j < segmentInfo.commits[i].files.length; j++) {
-                                    var segList = index.fileByName[segmentInfo.commits[i].files[j]].segments;
-                                    var got = false;
-                                    for ( var k = 0; k < segList.length; k++ ) {
-                                        if (segList[k].name === segmentName) {
-                                           got = true;
+                                    if ( index.fileByName[segmentInfo.commits[i].files[j]] === undefined ) {
+                                        console.log("Cant file file ",segmentInfo.commits[i].files[j]," in segment ",segmentName);
+                                    } else {
+                                        var segList = index.fileByName[segmentInfo.commits[i].files[j]].segments;
+                                        var got = false;
+                                        for ( var k = 0; k < segList.length; k++ ) {
+                                            if (segList[k].name === segmentName) {
+                                               got = true;
+                                            }
                                         }
-                                    }
-                                    if ( !got ) {
-                                        segList.push({
-                                            name : segmentName,
-                                            class : segmentClass
-                                        });
+                                        if ( !got ) {
+                                            segList.push({
+                                                name : segmentName,
+                                                class : segmentClass
+                                            });
+                                        }
                                     }
                                }
                             }
