@@ -15,6 +15,8 @@ Initially it support inspecting and downloading lucene indexes.
 More to come over time ......
 
 
+
+
 # Rapid Cycle development
 
 Sometimes, developing UI in OSGi bundles can be slow. The main servlet delivers the UI from resources in the classpath.
